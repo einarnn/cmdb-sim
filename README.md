@@ -8,8 +8,8 @@ This repository includes private CA and server certs. At minimum users will need
 
 Assuming the `docker-compose.yml` included has been used, these two URLs may be used to configure an ISE pxGrid Direct push connector for bulk and incremental sync over https:
 
-https://<you-ip-address>:8443/api/v1/cmdb
-https://<you-ip-address>:8443/api/v1/cmdb?sys_updated_on.gte.{{.LATEST_VERSION}}
+* `https://<you-ip-address>:8443/api/v1/cmdb`
+* `https://<you-ip-address>:8443/api/v1/cmdb?sys_updated_on.gte.{{.LATEST_VERSION}}`
 
 The test server doesn't implement authentication, but this must be configured on ISE regardless. Just configure basic authentication with a dummy username and password.
 

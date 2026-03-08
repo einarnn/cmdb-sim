@@ -1,6 +1,8 @@
 # CMDB Simulator
 
-Simple `aiohttp` service that simulates ServiceNow-style CMDB records with periodic random mutations.
+Simple `aiohttp` service that simulates ServiceNow-style CMDB records with periodic random mutations. Intended for use with pxGrid Direct push connectors on the Cisco Identity Services Engine. Readers can find a pxGrid Direct webinar [here](https://youtu.be/g8fzBPY8gU8). It is recommended that you be familiar with Docker and X.509 certificates to easily make use of this example.
+
+This repository includes private CA and server certs. At minimum users will need to regenerate the server set with an appropriate IP SAN, but the example may still be used with plain http instead of https. If https is chosen then the CA cert **must** be uploaded to ISE's trusted certificates unless cert validation is disabled.
 
 ## Features
 

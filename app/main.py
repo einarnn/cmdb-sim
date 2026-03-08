@@ -9,7 +9,12 @@ from contextlib import suppress
 from aiohttp import web
 
 from .config import Config
-from .filters import FilterParseError, TS_FORMAT, parse_sys_updated_on_filters
+from .filters import (
+    FilterParseError,
+    TS_FORMAT,
+    parse_sys_updated_on_conditions,
+    parse_sys_updated_on_filters,
+)
 from .persistence import CMDBPersistence
 from .store import CMDBStore, generate_records
 from .tls import ensure_tls_context
@@ -19,11 +24,13 @@ LOGGER = logging.getLogger("cmdb-sim")
 
 def create_app(config: Config) -> web.Application:
     app = web.Application()
-    store = CMDBStore(
-        records=generate_records(config.cmdb_record_count, seed=config.random_seed),
-        max_record_changes_per_hour=config.max_record_changes_per_hour,
-        seed=config.random_seed,
-    )
+    store: CMDBStore | None = None
+    if not config.persistence_enabled:
+        store = CMDBStore(
+            records=generate_records(config.cmdb_record_count, seed=config.random_seed),
+            max_record_changes_per_hour=config.max_record_changes_per_hour,
+            seed=config.random_seed,
+        )
 
     app["config"] = config
     app["store"] = store
@@ -54,21 +61,31 @@ async def readyz(request: web.Request) -> web.Response:
 
 
 async def get_cmdb(request: web.Request) -> web.Response:
-    store: CMDBStore = request.app["store"]
-
     try:
-        predicates = parse_sys_updated_on_filters(request.query_string)
+        conditions = parse_sys_updated_on_conditions(request.query_string)
     except FilterParseError as exc:
         return web.json_response({"error": str(exc)}, status=400)
 
-    rows = await store.snapshot_sorted()
-    if predicates:
-        filtered = []
-        for row in rows:
-            dt = datetime.strptime(row["sys_updated_on"], TS_FORMAT)
-            if all(predicate(dt) for predicate in predicates):
-                filtered.append(row)
-        rows = filtered
+    cfg: Config = request.app["config"]
+    if cfg.persistence_enabled:
+        persistence: CMDBPersistence | None = request.app["persistence"]
+        if persistence is None:
+            return web.json_response({"error": "Persistence is not ready"}, status=503)
+        rows = await persistence.fetch_records(conditions)
+    else:
+        store: CMDBStore | None = request.app["store"]
+        if store is None:
+            return web.json_response({"error": "Store is not initialized"}, status=503)
+
+        predicates = parse_sys_updated_on_filters(request.query_string)
+        rows = await store.snapshot_sorted()
+        if predicates:
+            filtered = []
+            for row in rows:
+                dt = datetime.strptime(row["sys_updated_on"], TS_FORMAT)
+                if all(predicate(dt) for predicate in predicates):
+                    filtered.append(row)
+            rows = filtered
 
     return web.json_response({"result": rows})
 
@@ -84,9 +101,8 @@ async def start_persistence(app: web.Application) -> None:
     await persistence.connect()
     app["persistence"] = persistence
 
-    store: CMDBStore = app["store"]
-    records = await persistence.bootstrap_records(await store.snapshot_sorted())
-    await store.replace_all(records)
+    generated = generate_records(cfg.cmdb_record_count, seed=cfg.random_seed)
+    await persistence.ensure_seed_data(generated)
 
 
 async def stop_persistence(app: web.Application) -> None:
@@ -104,12 +120,19 @@ async def start_mutation_loop(app: web.Application) -> None:
         LOGGER.info("Mutation worker disabled by configuration.")
         app["mutation_task"] = None
         return
-    store: CMDBStore = app["store"]
     persistence: CMDBPersistence | None = app["persistence"]
+
+    store: CMDBStore | None = None
+    if not cfg.persistence_enabled:
+        store = app["store"]
+        if store is None:
+            raise RuntimeError("In-memory store is not initialized")
+
     app["mutation_task"] = asyncio.create_task(
         _mutation_worker(
             store,
             persistence=persistence,
+            max_record_changes_per_hour=cfg.max_record_changes_per_hour,
             tick_seconds=cfg.mutation_tick_seconds,
             max_mutations_per_tick=cfg.max_mutations_per_tick,
         )
@@ -130,17 +153,19 @@ async def stop_mutation_loop(app: web.Application) -> None:
 
 
 async def _mutation_worker(
-    store: CMDBStore,
+    store: CMDBStore | None,
     persistence: CMDBPersistence | None,
+    max_record_changes_per_hour: int,
     tick_seconds: int,
     max_mutations_per_tick: int,
 ) -> None:
     rng = random.Random()
     while True:
         requested = rng.randint(0, max_mutations_per_tick)
-        changed = await store.mutate_records(requested)
-        if persistence is not None and changed:
-            await persistence.upsert_many(changed)
+        if persistence is not None:
+            await persistence.mutate_random(requested, max_record_changes_per_hour)
+        elif store is not None:
+            await store.mutate_once(requested)
         await asyncio.sleep(tick_seconds)
 
 

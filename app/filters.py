@@ -9,6 +9,7 @@ TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 FILTER_PATTERN = re.compile(r"^sys_updated_on\.(gt|gte|lt|lte|eq)\.(.+)$")
 
 Predicate = Callable[[datetime], bool]
+Condition = tuple[str, datetime]
 
 
 class FilterParseError(ValueError):
@@ -24,11 +25,11 @@ def parse_timestamp(value: str) -> datetime:
         ) from exc
 
 
-def parse_sys_updated_on_filters(raw_query_string: str) -> list[Predicate]:
+def parse_sys_updated_on_conditions(raw_query_string: str) -> list[Condition]:
     if not raw_query_string:
         return []
 
-    predicates: list[Predicate] = []
+    conditions: list[Condition] = []
     saw_sys_updated_on_token = False
 
     for part in raw_query_string.split("&"):
@@ -53,7 +54,7 @@ def parse_sys_updated_on_filters(raw_query_string: str) -> list[Predicate]:
 
             op, rhs = match.group(1), match.group(2)
             rhs_dt = parse_timestamp(rhs)
-            predicates.append(_operator_predicate(op, rhs_dt))
+            conditions.append((op, rhs_dt))
             parsed = True
             break
 
@@ -63,11 +64,19 @@ def parse_sys_updated_on_filters(raw_query_string: str) -> list[Predicate]:
                 "Expected syntax: sys_updated_on.<gt|gte|lt|lte|eq>.<YYYY-MM-DD HH:MM:SS>"
             )
 
-    if saw_sys_updated_on_token and not predicates:
+    if saw_sys_updated_on_token and not conditions:
         raise FilterParseError(
             "sys_updated_on filter provided but no valid operator was found."
         )
 
+    return conditions
+
+
+def parse_sys_updated_on_filters(raw_query_string: str) -> list[Predicate]:
+    conditions = parse_sys_updated_on_conditions(raw_query_string)
+    predicates: list[Predicate] = []
+    for op, rhs in conditions:
+        predicates.append(_operator_predicate(op, rhs))
     return predicates
 
 
@@ -83,4 +92,3 @@ def _operator_predicate(op: str, rhs: datetime) -> Predicate:
     if op == "eq":
         return lambda lhs: lhs == rhs
     raise FilterParseError(f"Unsupported operator: {op}")
-

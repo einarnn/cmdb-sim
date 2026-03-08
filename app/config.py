@@ -21,6 +21,13 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
     return value
 
 
+def _env_is_true_literal(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() == "true"
+
+
 @dataclass(frozen=True)
 class Config:
     host: str
@@ -37,6 +44,12 @@ class Config:
     max_mutations_per_tick: int
     random_seed: int
     mutation_enabled: bool
+    persistence_enabled: bool
+    db_host: str
+    db_port: int
+    db_user: str
+    db_password: str
+    db_name: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -57,4 +70,10 @@ class Config:
             max_mutations_per_tick=_env_int("MAX_MUTATIONS_PER_TICK", 5, minimum=0),
             random_seed=_env_int("CMDB_RANDOM_SEED", 42, minimum=0),
             mutation_enabled=_env_bool("MUTATION_ENABLED", True),
+            persistence_enabled=_env_is_true_literal("PERSISTENCE_ENABLED", False),
+            db_host=os.getenv("DB_HOST", "localhost"),
+            db_port=_env_int("DB_PORT", 5432, minimum=1),
+            db_user=os.getenv("DB_USER", "cmdb"),
+            db_password=os.getenv("DB_PASSWORD", "cmdb"),
+            db_name=os.getenv("DB_NAME", "cmdb"),
         )

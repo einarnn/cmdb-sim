@@ -15,6 +15,47 @@ The test server doesn't implement authentication, but this must be configured on
 
 Plain http may also be used if "https" is replaced by "http" and ":8443" is replaced by ":8080".
 
+Changes to the data in the last 5 minutes can be queried **on macOS using bash** using a CLI command like:
+
+```bash
+#
+# define a shell function for bash to URL encode a string
+#
+urlencode() {
+  local LC_ALL=C
+  local c
+
+  while IFS= read -r -n1 c; do
+    case "$c" in
+      [a-zA-Z0-9.~_-])
+        printf '%s' "$c"
+        ;;
+      *)
+        printf '%%%02X' "'$c"
+        ;;
+    esac
+  done
+}
+
+#
+# create a timstamp string in the correct format for 5 minutes ago as
+# part of the query URL
+#
+curl --silent "http://localhost:8080/api/v1/cmdb?sys_updated_on.gte.$(date -v -1M '+%Y-%m-%d %H:%M:%S' | urlencode)"
+```
+
+If you also have `jq` installed, you can get the number of changes in the last 5 minutes using:
+
+```bash
+# display changes in last 5 minutes, pretty printed
+curl --silent "http://localhost:8080/api/v1/cmdb?sys_updated_on.gte.$(date -v -1M '+%Y-%m-%d %H:%M:%S' | urlencode)" | jq -C ' .result | length'
+
+# count the number of changes
+curl --silent "http://localhost:8080/api/v1/cmdb?sys_updated_on.gte.$(date -v -1M '+%Y-%m-%d %H:%M:%S' | urlencode)" | jq -C
+```
+
+
+
 ## Features
 
 - In-memory dataset generated at startup via `CMDB_RECORD_COUNT`
@@ -24,7 +65,7 @@ Plain http may also be used if "https" is replaced by "http" and ":8443" is repl
   - `u_sync` toggle
   - monotonic `sys_mod_count`
 - Hard cap on changed records per hour (`MAX_RECORD_CHANGES_PER_HOUR`, default `1000`)
-- `GET /cmdb` returns `{"result":[...]}` sorted by `sys_updated_on` ascending
+- `GET /api/v1/cmdb` returns `{"result":[...]}` sorted by `sys_updated_on` ascending
 - `sys_updated_on` relational filters with query syntax:
   - `sys_updated_on.gt.<timestamp>`
   - `sys_updated_on.gte.<timestamp>`
@@ -32,6 +73,7 @@ Plain http may also be used if "https" is replaced by "http" and ":8443" is repl
   - `sys_updated_on.lte.<timestamp>`
   - `sys_updated_on.eq.<timestamp>`
 - Optional TLS with provided cert/key or auto-generated self-signed certs
+- Optional Postgres-backed persistence controlled by `PERSISTENCE_ENABLED`
 
 Timestamp format is `YYYY-MM-DD HH:MM:SS`.
 
@@ -112,6 +154,12 @@ Health:
 curl -s "http://localhost:8080/healthz"
 ```
 
+Readiness:
+
+```bash
+curl -s "http://localhost:8080/readyz"
+```
+
 ## Configuration
 
 - `CMDB_HOST` (default `0.0.0.0`)
@@ -122,6 +170,12 @@ curl -s "http://localhost:8080/healthz"
 - `MAX_MUTATIONS_PER_TICK` (default `5`)
 - `CMDB_RANDOM_SEED` (default `42`)
 - `MUTATION_ENABLED` (default `true`)
+- `PERSISTENCE_ENABLED` (`true` enables persistence, anything else disables)
+- `DB_HOST` (default `localhost`)
+- `DB_PORT` (default `5432`)
+- `DB_USER` (default `cmdb`)
+- `DB_PASSWORD` (default `cmdb`)
+- `DB_NAME` (default `cmdb`)
 - `TLS_ENABLED` (default `false`)
 - `TLS_PORT` (default `8443`)
 - `TLS_AUTO_GENERATE_CERTS` (default `true`)
@@ -133,4 +187,32 @@ curl -s "http://localhost:8080/healthz"
 
 ```bash
 pytest -q
+```
+
+## Appendices
+
+### A1 zsh-safe urlencode function
+
+```zsh
+urlencode() {
+  emulate -L zsh
+  local LC_ALL=C
+  local s c
+
+  s=$(cat)
+
+  local i=1 len=${#s}
+  while (( i <= len )); do
+    c=${s[i]}
+    case "$c" in
+      [a-zA-Z0-9.~_-])
+        printf '%s' "$c"
+        ;;
+      *)
+        printf '%%%02X' "'$c"
+        ;;
+    esac
+    (( i++ ))
+  done
+}
 ```

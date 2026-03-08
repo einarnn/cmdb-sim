@@ -19,6 +19,12 @@ services:
       MAX_MUTATIONS_PER_TICK: ${MAX_MUTATIONS_PER_TICK:-5}
       CMDB_RANDOM_SEED: ${CMDB_RANDOM_SEED:-42}
       MUTATION_ENABLED: ${MUTATION_ENABLED:-true}
+      PERSISTENCE_ENABLED: ${PERSISTENCE_ENABLED:-false}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: cmdb
+      DB_PASSWORD: cmdb
+      DB_NAME: cmdb
     ports:
       - "8080:8080"
       - "8443:8443"
@@ -45,7 +51,7 @@ services:
     volumes:
       # for postgres <= 17
       # - cmdb-postgres:/var/lib/postgresql/data
-      
+
       # for postgres 18+
       - cmdb-postgres:/var/lib/postgresql
     healthcheck:

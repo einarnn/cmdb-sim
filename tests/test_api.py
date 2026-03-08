@@ -21,6 +21,12 @@ def config() -> Config:
         max_mutations_per_tick=0,
         random_seed=123,
         mutation_enabled=False,
+        persistence_enabled=False,
+        db_host="localhost",
+        db_port=5432,
+        db_user="cmdb",
+        db_password="cmdb",
+        db_name="cmdb",
     )
 
 
@@ -29,7 +35,7 @@ async def test_cmdb_sorted(app_client, config: Config) -> None:
     app = create_app(config)
     client = await app_client(app)
 
-    resp = await client.get("/cmdb")
+    resp = await client.get("/api/v1/cmdb")
     assert resp.status == 200
     payload = await resp.json()
     rows = payload["result"]
@@ -42,7 +48,7 @@ async def test_cmdb_filter(app_client, config: Config) -> None:
     app = create_app(config)
     client = await app_client(app)
 
-    resp = await client.get("/cmdb?sys_updated_on.gte.2020-01-01+00:00:00")
+    resp = await client.get("/api/v1/cmdb?sys_updated_on.gte.2020-01-01+00:00:00")
     assert resp.status == 200
 
     payload = await resp.json()
@@ -54,5 +60,5 @@ async def test_cmdb_filter_invalid(app_client, config: Config) -> None:
     app = create_app(config)
     client = await app_client(app)
 
-    resp = await client.get("/cmdb?sys_updated_on.nope.2020-01-01+00:00:00")
+    resp = await client.get("/api/v1/cmdb?sys_updated_on.nope.2020-01-01+00:00:00")
     assert resp.status == 400

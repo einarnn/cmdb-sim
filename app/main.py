@@ -10,6 +10,7 @@ from aiohttp import web
 
 from .config import Config
 from .filters import FilterParseError, TS_FORMAT, parse_sys_updated_on_filters
+from .persistence import CMDBPersistence
 from .store import CMDBStore, generate_records
 from .tls import ensure_tls_context
 
@@ -27,17 +28,29 @@ def create_app(config: Config) -> web.Application:
     app["config"] = config
     app["store"] = store
     app["mutation_task"] = None
+    app["persistence"] = None
 
     app.router.add_get("/healthz", healthz)
+    app.router.add_get("/readyz", readyz)
     app.router.add_get("/api/v1/cmdb", get_cmdb)
 
+    app.on_startup.append(start_persistence)
     app.on_startup.append(start_mutation_loop)
     app.on_cleanup.append(stop_mutation_loop)
+    app.on_cleanup.append(stop_persistence)
     return app
 
 
 async def healthz(_: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
+
+
+async def readyz(request: web.Request) -> web.Response:
+    cfg: Config = request.app["config"]
+    persistence: CMDBPersistence | None = request.app["persistence"]
+    if cfg.persistence_enabled and persistence is None:
+        return web.json_response({"status": "not_ready"}, status=503)
+    return web.json_response({"status": "ready"})
 
 
 async def get_cmdb(request: web.Request) -> web.Response:
@@ -60,6 +73,31 @@ async def get_cmdb(request: web.Request) -> web.Response:
     return web.json_response({"result": rows})
 
 
+async def start_persistence(app: web.Application) -> None:
+    cfg: Config = app["config"]
+    if not cfg.persistence_enabled:
+        LOGGER.info("Persistence disabled (PERSISTENCE_ENABLED != 'true').")
+        app["persistence"] = None
+        return
+
+    persistence = CMDBPersistence(cfg)
+    await persistence.connect()
+    app["persistence"] = persistence
+
+    store: CMDBStore = app["store"]
+    records = await persistence.bootstrap_records(await store.snapshot_sorted())
+    await store.replace_all(records)
+
+
+async def stop_persistence(app: web.Application) -> None:
+    persistence: CMDBPersistence | None = app["persistence"]
+    if persistence is None:
+        return
+    await persistence.close()
+    app["persistence"] = None
+    LOGGER.info("Persistence connection closed.")
+
+
 async def start_mutation_loop(app: web.Application) -> None:
     cfg: Config = app["config"]
     if not cfg.mutation_enabled:
@@ -67,9 +105,11 @@ async def start_mutation_loop(app: web.Application) -> None:
         app["mutation_task"] = None
         return
     store: CMDBStore = app["store"]
+    persistence: CMDBPersistence | None = app["persistence"]
     app["mutation_task"] = asyncio.create_task(
         _mutation_worker(
             store,
+            persistence=persistence,
             tick_seconds=cfg.mutation_tick_seconds,
             max_mutations_per_tick=cfg.max_mutations_per_tick,
         )
@@ -90,12 +130,17 @@ async def stop_mutation_loop(app: web.Application) -> None:
 
 
 async def _mutation_worker(
-    store: CMDBStore, tick_seconds: int, max_mutations_per_tick: int
+    store: CMDBStore,
+    persistence: CMDBPersistence | None,
+    tick_seconds: int,
+    max_mutations_per_tick: int,
 ) -> None:
     rng = random.Random()
     while True:
         requested = rng.randint(0, max_mutations_per_tick)
-        await store.mutate_once(requested)
+        changed = await store.mutate_records(requested)
+        if persistence is not None and changed:
+            await persistence.upsert_many(changed)
         await asyncio.sleep(tick_seconds)
 
 

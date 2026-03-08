@@ -95,22 +95,27 @@ class CMDBStore:
         copy_records.sort(key=lambda r: r["sys_updated_on"])
         return copy_records
 
-    async def mutate_once(self, requested: int) -> int:
+    async def replace_all(self, records: list[CMDBRecord]) -> None:
+        async with self._lock:
+            self._records = records
+
+    async def mutate_records(self, requested: int) -> list[CMDBRecord]:
         if requested <= 0:
-            return 0
+            return []
 
         now_epoch = datetime.now(UTC).timestamp()
         async with self._lock:
             allowance = self._available_mutations(now_epoch)
             if allowance <= 0:
-                return 0
+                return []
 
             max_changes = min(requested, allowance, len(self._records))
             if max_changes <= 0:
-                return 0
+                return []
 
             indices = self._rng.sample(range(len(self._records)), k=max_changes)
             now_str = datetime.now(UTC).strftime(TS_FORMAT)
+            changed: list[CMDBRecord] = []
 
             for idx in indices:
                 record = self._records[idx]
@@ -128,6 +133,7 @@ class CMDBStore:
                 next_count = int(record["sys_mod_count"]) + self._rng.randint(1, 3)
                 record["sys_mod_count"] = str(next_count)
                 self._events.append(now_epoch)
+                changed.append(deepcopy(record))
 
                 LOGGER.info(
                     "record_updated sys_id=%s sys_updated_on_old=%s sys_updated_on_new=%s "
@@ -143,4 +149,7 @@ class CMDBStore:
                     prev_mod_count,
                     record["sys_mod_count"],
                 )
-            return max_changes
+            return changed
+
+    async def mutate_once(self, requested: int) -> int:
+        return len(await self.mutate_records(requested))

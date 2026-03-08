@@ -1,0 +1,59 @@
+services:
+  cmdb-sim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cmdb-sim:latest
+    container_name: cmdb-sim
+    environment:
+      CMDB_PORT: "8080"
+      TLS_PORT: "8443"
+      TLS_ENABLED: "true"
+      TLS_AUTO_GENERATE_CERTS: "false"
+      TLS_KEEP_HTTP_LISTENER: "true"
+      TLS_CERT_FILE: "/certs/server-chain.pem"
+      TLS_KEY_FILE: "/certs/server-key.pem"
+      CMDB_RECORD_COUNT: ${CMDB_RECORD_COUNT:-1000}
+      MAX_RECORD_CHANGES_PER_HOUR: ${CMDB_RECORD_CHURN:-1000}
+      MUTATION_TICK_SECONDS: ${MUTATION_TICK_SECONDS:-5}
+      MAX_MUTATIONS_PER_TICK: ${MAX_MUTATIONS_PER_TICK:-5}
+      CMDB_RANDOM_SEED: ${CMDB_RANDOM_SEED:-42}
+      MUTATION_ENABLED: ${MUTATION_ENABLED:-true}
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    volumes:
+      - ./certs:/certs
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')\""]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:18
+    container_name: cmdb-sim-postgres
+    profiles: ["db"]
+    environment:
+      POSTGRES_USER: cmdb
+      POSTGRES_PASSWORD: cmdb
+      POSTGRES_DB: cmdb
+    ports:
+      - "5432:5432"
+    volumes:
+      # for postgres <= 17
+      # - cmdb-postgres:/var/lib/postgresql/data
+      
+      # for postgres 18+
+      - cmdb-postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cmdb -d cmdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  cmdb-postgres:
